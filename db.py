@@ -3,8 +3,8 @@ import streamlit as st
 from datetime import datetime
 import uuid
 
-SUPABASE_URL = "https://mjlslbhulkznxymjmzxv.supabase.co"
-SUPABASE_KEY = "sb_publishable_Te-gOz78RBPBVvmAZM4jDQ_-oH9I8o7"
+SUPABASE_URL = "https://lzwzcxeplxtnatifzodr.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx6d3pjeGVwbHh0bmF0aWZ6b2RyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM1Njg1MDQsImV4cCI6MjA5OTE0NDUwNH0.4_PsPz094bm6oUpKH6utppgzb2zlqq30k_DMUnv2VDo"
 
 @st.cache_resource
 def get_client():
