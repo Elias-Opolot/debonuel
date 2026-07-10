@@ -454,78 +454,132 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("📷 Barcode Scanner")
 
-    # Camera scanner using HTML5
-    st.markdown("### Camera Scan")
-    st.info("Click **Start Camera** below, then point camera at a barcode.")
+    # ── HOW SCANNING WORKS ────────────────────────
+    st.info(
+        "**How to scan a barcode:**\n\n"
+        "1. Click the **Open Scanner** button below — it opens a scanner page in a new tab\n"
+        "2. Allow camera access when asked\n"
+        "3. Point your camera at the barcode — it reads automatically\n"
+        "4. The barcode number appears on screen — copy it\n"
+        "5. Come back here and paste it in the box below"
+    )
 
-    scanner_html = """
-    <div style="background:#161616;border-radius:14px;padding:16px;border:1px solid #262626">
-        <video id="video" style="width:100%;border-radius:10px;background:#000;min-height:200px" playsinline autoplay muted></video>
-        <canvas id="canvas" style="display:none"></canvas>
-        <div id="result" style="margin-top:12px;padding:12px;background:#0b0b0b;border-radius:8px;font-family:monospace;font-size:.9rem;color:#c9a84c;min-height:40px">
-            Waiting for scan...
-        </div>
-        <div style="display:flex;gap:8px;margin-top:12px">
-            <button onclick="startCam()" style="flex:1;padding:11px;background:#c9a84c;color:#000;border:none;border-radius:10px;font-weight:600;font-size:.9rem;cursor:pointer">Start Camera</button>
-            <button onclick="stopCam()" style="flex:1;padding:11px;background:#262626;color:#f2ede4;border:none;border-radius:10px;font-weight:600;font-size:.9rem;cursor:pointer">Stop Camera</button>
-        </div>
-    </div>
+    # Build the scanner page as a data URL so it opens in new tab
+    scanner_page = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>DEBONUEL Scanner</title>
+<script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0b0b0b;color:#f2ede4;font-family:sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:20px}
+h1{color:#c9a84c;font-size:1.4rem;margin-bottom:6px;letter-spacing:.08em}
+p{color:#777;font-size:.83rem;margin-bottom:16px;text-align:center}
+#video{width:100%;max-width:480px;border-radius:14px;background:#000;min-height:260px;display:block}
+#result-box{width:100%;max-width:480px;margin-top:14px;background:#161616;border:2px solid #262626;border-radius:12px;padding:16px;text-align:center}
+#result-label{font-size:.72rem;color:#777;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px}
+#result-code{font-size:1.4rem;font-weight:700;color:#c9a84c;letter-spacing:.05em;min-height:36px;word-break:break-all}
+#status{font-size:.82rem;color:#777;margin-top:8px}
+.btn{width:100%;max-width:480px;padding:13px;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;margin-top:10px}
+.btn-gold{background:#c9a84c;color:#000}
+.btn-dark{background:#262626;color:#f2ede4}
+#copy-btn{display:none}
+</style>
+</head>
+<body>
+<h1>DEBONUEL Scanner</h1>
+<p>Point camera at barcode to scan</p>
+<video id="video" playsinline autoplay muted></video>
+<div id="result-box">
+  <div id="result-label">Scanned Barcode</div>
+  <div id="result-code">---</div>
+  <div id="status">Press Start to begin</div>
+</div>
+<button class="btn btn-gold" onclick="startScan()">Start Camera</button>
+<button class="btn btn-dark" onclick="stopScan()">Stop Camera</button>
+<button class="btn btn-gold" id="copy-btn" onclick="copyCode()">Copy Barcode Number</button>
 
-    <script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
-    <script>
-    var stream = null;
-    var codeReader = null;
+<script>
+var stream = null;
+var reader = null;
+var scanned = '';
 
-    function startCam() {
-        var result = document.getElementById('result');
-        result.textContent = 'Starting camera...';
-        result.style.color = '#777';
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } })
-        .then(function(s) {
-            stream = s;
-            var vid = document.getElementById('video');
-            vid.srcObject = stream;
-            vid.play();
-            result.textContent = 'Camera on. Point at barcode...';
-            result.style.color = '#c9a84c';
-            if (window.ZXing) {
-                codeReader = new ZXing.BrowserMultiFormatReader();
-                codeReader.decodeFromVideoElement(vid, function(res, err) {
-                    if (res) {
-                        var code = res.getText();
-                        result.textContent = 'SCANNED: ' + code;
-                        result.style.color = '#4caf7d';
-                        stopCam();
-                        // Send to Streamlit
-                        window.parent.postMessage({ type: 'barcode', code: code }, '*');
-                    }
-                });
-            }
-        })
-        .catch(function(err) {
-            if (err.name === 'NotAllowedError') {
-                result.textContent = 'Camera permission denied. Allow camera access in browser settings.';
-            } else {
-                result.textContent = 'Camera error: ' + err.message;
-            }
-            result.style.color = '#d95555';
-        });
+function startScan() {
+  var status = document.getElementById('status');
+  status.textContent = 'Starting camera...';
+  status.style.color = '#777';
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+  }).then(function(s) {
+    stream = s;
+    var vid = document.getElementById('video');
+    vid.srcObject = stream;
+    vid.play();
+    status.textContent = 'Camera on — point at barcode...';
+    status.style.color = '#c9a84c';
+    if (window.ZXing) {
+      reader = new ZXing.BrowserMultiFormatReader();
+      reader.decodeFromVideoElement(vid, function(result, err) {
+        if (result) {
+          scanned = result.getText();
+          document.getElementById('result-code').textContent = scanned;
+          document.getElementById('status').textContent = 'Barcode scanned successfully!';
+          document.getElementById('status').style.color = '#4caf7d';
+          document.getElementById('result-box').style.borderColor = '#4caf7d';
+          document.getElementById('copy-btn').style.display = 'block';
+          stopScan();
+        }
+      });
+    } else {
+      status.textContent = 'Scanner library loading... please wait and try again.';
     }
-
-    function stopCam() {
-        if (stream) { stream.getTracks().forEach(function(t) { t.stop(); }); stream = null; }
-        if (codeReader) { try { codeReader.reset(); } catch(e) {} codeReader = null; }
-        var vid = document.getElementById('video');
-        vid.srcObject = null;
+  }).catch(function(err) {
+    if (err.name === 'NotAllowedError') {
+      status.textContent = 'Camera permission denied. Please allow camera access.';
+    } else {
+      status.textContent = 'Error: ' + err.message;
     }
-    </script>
-    """
-    st.components.v1.html(scanner_html, height=420)
+    status.style.color = '#d95555';
+  });
+}
+
+function stopScan() {
+  if (stream) { stream.getTracks().forEach(function(t) { t.stop(); }); stream = null; }
+  if (reader) { try { reader.reset(); } catch(e) {} reader = null; }
+}
+
+function copyCode() {
+  if (scanned) {
+    navigator.clipboard.writeText(scanned).then(function() {
+      document.getElementById('status').textContent = 'Copied! Go back and paste it in the app.';
+    }).catch(function() {
+      document.getElementById('status').textContent = 'Copy manually: ' + scanned;
+    });
+  }
+}
+
+window.onload = function() { startScan(); };
+</script>
+</body>
+</html>"""
+
+    import base64
+    scanner_b64 = base64.b64encode(scanner_page.encode()).decode()
+    scanner_url = f"data:text/html;base64,{scanner_b64}"
+
+    st.link_button(
+        "📷 Open Scanner in New Tab",
+        scanner_url,
+        use_container_width=True
+    )
 
     st.divider()
 
     # Manual barcode entry
-    st.markdown("### Manual Barcode Lookup")
+    st.markdown("### Enter Barcode Number")
+    st.caption("After scanning, paste the barcode number here to find the product.")
     bc = st.text_input("Type or paste barcode number", placeholder="e.g. 6001255", key="manual_bc")
     if bc:
         prods = get_products()
