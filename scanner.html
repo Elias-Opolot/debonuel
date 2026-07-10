@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>DEBONUEL Scanner</title>
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:#0b0b0b;color:#f2ede4;font-family:sans-serif;min-height:100vh;
+     display:flex;flex-direction:column;align-items:center;padding:20px;gap:14px}
+h1{color:#c9a84c;font-size:1.5rem;font-weight:800;letter-spacing:.1em;margin-top:10px}
+.sub{color:#777;font-size:.83rem;text-align:center}
+#video-wrap{width:100%;max-width:480px;position:relative;border-radius:16px;overflow:hidden;background:#000;min-height:280px}
+#video{width:100%;display:block;min-height:280px;object-fit:cover}
+.corners{position:absolute;inset:0;pointer-events:none}
+.corner{position:absolute;width:40px;height:40px;border-color:#c9a84c;border-style:solid}
+.tl{top:16px;left:16px;border-width:3px 0 0 3px;border-radius:4px 0 0 0}
+.tr{top:16px;right:16px;border-width:3px 3px 0 0;border-radius:0 4px 0 0}
+.bl{bottom:16px;left:16px;border-width:0 0 3px 3px;border-radius:0 0 0 4px}
+.br{bottom:16px;right:16px;border-width:0 3px 3px 0;border-radius:0 0 4px 0}
+.laser{position:absolute;left:10%;right:10%;height:2px;background:#c9a84c;
+       box-shadow:0 0 12px #c9a84c;animation:scan 2s ease-in-out infinite;top:50%}
+@keyframes scan{0%,100%{transform:translateY(-80px)}50%{transform:translateY(80px)}}
+#result-box{width:100%;max-width:480px;background:#161616;border:2px solid #262626;
+            border-radius:14px;padding:18px;text-align:center;transition:border-color .3s}
+#result-box.found{border-color:#4caf7d}
+#result-box.error{border-color:#d95555}
+.rlabel{font-size:.7rem;color:#777;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
+#code{font-size:1.5rem;font-weight:700;color:#c9a84c;min-height:36px;word-break:break-all;letter-spacing:.05em}
+#status{font-size:.82rem;color:#777;margin-top:8px;line-height:1.5}
+.btn{width:100%;max-width:480px;padding:14px;border:none;border-radius:12px;
+     font-size:1rem;font-weight:600;cursor:pointer;transition:opacity .2s}
+.btn:active{opacity:.8}
+.gold{background:#c9a84c;color:#000}
+.dark{background:#1d1d1d;color:#f2ede4;border:1px solid #262626}
+.green{background:#4caf7d;color:#fff;display:none}
+#copy-btn{display:none}
+</style>
+</head>
+<body>
+
+<h1>DEBONUEL</h1>
+<div class="sub">Point camera at barcode to scan</div>
+
+<div id="video-wrap">
+  <video id="video" playsinline autoplay muted></video>
+  <div class="corners">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+    <div class="laser" id="laser"></div>
+  </div>
+</div>
+
+<div id="result-box">
+  <div class="rlabel">Scanned Barcode</div>
+  <div id="code">---</div>
+  <div id="status">Press Start Camera to begin scanning</div>
+</div>
+
+<button class="btn gold" id="start-btn" onclick="startScan()">📷 Start Camera</button>
+<button class="btn dark" id="stop-btn" onclick="stopScan()" style="display:none">⏹ Stop Camera</button>
+<button class="btn green" id="copy-btn" onclick="copyCode()">📋 Copy Barcode Number</button>
+<button class="btn dark" onclick="resetScan()">🔄 Scan Again</button>
+
+<script>
+var streamObj = null;
+var readerObj = null;
+var scannedCode = '';
+
+function setStatus(msg, color) {
+  var el = document.getElementById('status');
+  el.textContent = msg;
+  el.style.color = color || '#777';
+}
+
+function startScan() {
+  setStatus('Requesting camera...', '#c9a84c');
+  document.getElementById('start-btn').style.display = 'none';
+  document.getElementById('stop-btn').style.display = 'block';
+  document.getElementById('laser').style.display = 'block';
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('Camera not supported on this browser. Try Chrome.', '#d95555');
+    document.getElementById('result-box').classList.add('error');
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    }
+  })
+  .then(function(stream) {
+    streamObj = stream;
+    var vid = document.getElementById('video');
+    vid.srcObject = stream;
+    vid.play();
+    setStatus('Camera on — point at barcode and hold steady', '#c9a84c');
+
+    // Wait for ZXing to load then start decoding
+    waitForZXing(vid);
+  })
+  .catch(function(err) {
+    document.getElementById('start-btn').style.display = 'block';
+    document.getElementById('stop-btn').style.display = 'none';
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      setStatus('Camera permission denied. Please allow camera access and try again.', '#d95555');
+    } else if (err.name === 'NotFoundError') {
+      setStatus('No camera found on this device.', '#d95555');
+    } else {
+      setStatus('Camera error: ' + err.message, '#d95555');
+    }
+    document.getElementById('result-box').classList.add('error');
+  });
+}
+
+function waitForZXing(vid) {
+  if (window.ZXing) {
+    startDecoding(vid);
+  } else {
+    setStatus('Loading scanner library...', '#c9a84c');
+    setTimeout(function() { waitForZXing(vid); }, 500);
+  }
+}
+
+function startDecoding(vid) {
+  try {
+    readerObj = new ZXing.BrowserMultiFormatReader();
+    readerObj.decodeFromVideoElement(vid, function(result, err) {
+      if (result) {
+        scannedCode = result.getText();
+        document.getElementById('code').textContent = scannedCode;
+        document.getElementById('result-box').classList.remove('error');
+        document.getElementById('result-box').classList.add('found');
+        document.getElementById('copy-btn').style.display = 'block';
+        setStatus('Barcode scanned! Copy the number and paste it in the app.', '#4caf7d');
+        stopScan();
+      }
+    });
+    setStatus('Ready — point camera at barcode', '#4caf7d');
+  } catch(e) {
+    setStatus('Scanner error: ' + e.message + '. Try refreshing.', '#d95555');
+  }
+}
+
+function stopScan() {
+  if (readerObj) { try { readerObj.reset(); } catch(e) {} readerObj = null; }
+  if (streamObj) { streamObj.getTracks().forEach(function(t) { t.stop(); }); streamObj = null; }
+  var vid = document.getElementById('video');
+  vid.srcObject = null;
+  document.getElementById('start-btn').style.display = 'block';
+  document.getElementById('stop-btn').style.display = 'none';
+  document.getElementById('laser').style.display = 'none';
+}
+
+function copyCode() {
+  if (!scannedCode) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(scannedCode)
+      .then(function() {
+        setStatus('Copied! Now go back to the DEBONUEL app and paste it.', '#4caf7d');
+        document.getElementById('copy-btn').textContent = 'Copied!';
+      })
+      .catch(function() { manualCopy(); });
+  } else {
+    manualCopy();
+  }
+}
+
+function manualCopy() {
+  var inp = document.createElement('input');
+  inp.value = scannedCode;
+  document.body.appendChild(inp);
+  inp.select();
+  inp.setSelectionRange(0, 99999);
+  try { document.execCommand('copy'); setStatus('Copied! Go back to DEBONUEL app and paste it.', '#4caf7d'); }
+  catch(e) { setStatus('Long-press the barcode number above to copy it manually.', '#c9a84c'); }
+  document.body.removeChild(inp);
+}
+
+function resetScan() {
+  scannedCode = '';
+  document.getElementById('code').textContent = '---';
+  document.getElementById('result-box').className = '';
+  document.getElementById('copy-btn').style.display = 'none';
+  document.getElementById('copy-btn').textContent = 'Copy Barcode Number';
+  setStatus('Press Start Camera to begin scanning', '#777');
+  startScan();
+}
+
+// Auto start on load
+window.onload = function() {
+  setTimeout(startScan, 800);
+};
+</script>
+</body>
+</html>
