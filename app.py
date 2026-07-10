@@ -565,13 +565,11 @@ window.onload = function() { startScan(); };
 </body>
 </html>"""
 
-    import base64
-    scanner_b64 = base64.b64encode(scanner_page.encode()).decode()
-    scanner_url = f"data:text/html;base64,{scanner_b64}"
+    SCANNER_URL = "https://elias-opolot.github.io/debonuel/scanner.html"
 
     st.link_button(
-        "📷 Open Scanner in New Tab",
-        scanner_url,
+        "📷 Open Camera Scanner",
+        SCANNER_URL,
         use_container_width=True
     )
 
