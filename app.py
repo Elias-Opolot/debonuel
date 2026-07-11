@@ -210,7 +210,7 @@ with tabs[0]:
                 with c1:
                     st.write(f"{i+1}. {item['name']}")
                 with c2:
-                    nq = st.number_input("", min_value=1, value=item["qty"],
+                    nq = st.number_input("Qty", min_value=1, value=item["qty"],
                                          key=f"q_{i}", label_visibility="collapsed")
                     if nq != item["qty"]:
                         item["qty"] = nq
