@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import calendar
 import json
@@ -8,7 +9,7 @@ from db import (
     get_products, add_product, update_product, delete_product,
     get_sales, get_sale_items, save_sale,
     get_suppliers, add_supplier, delete_supplier,
-    uid, today, now_time, fmt_ugx
+    uid, today, now_time, fmt_ugx, get_client
 )
 
 st.set_page_config(
@@ -32,15 +33,13 @@ html,body,[class*="css"]{font-family:'DM Sans',sans-serif}
 .ms{font-size:.68rem;color:#555;margin-top:2px}
 .rcpt{font-family:monospace;font-size:.82rem;background:#161616;border:1px solid #262626;border-radius:10px;padding:16px;white-space:pre;line-height:1.9;overflow-x:auto;color:#f2ede4}
 .supcard{background:#161616;border:1px solid #262626;border-radius:12px;padding:14px;margin-bottom:10px}
+.debtcard{background:#1a0a0a;border:1px solid #d95555;border-radius:12px;padding:14px;margin-bottom:10px}
 .day-banner{background:linear-gradient(135deg,#1a1500,#0b0b0b);border:1px solid #c9a84c;border-radius:14px;padding:16px;margin-bottom:14px;text-align:center}
 .day-active{color:#c9a84c;font-family:'Syne',sans-serif;font-weight:700;font-size:1.1rem}
-.srow{display:flex;align-items:center;padding:8px 0;border-bottom:1px solid #262626;gap:8px}
-.stbl-head{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;background:#1d1d1d;border-radius:8px;padding:8px 10px;font-size:.72rem;color:#777;text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px}
-.stbl-row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:8px 10px;border-bottom:1px solid #1a1a1a;font-size:.88rem;align-items:center}
-.prd-btn{background:#1d1d1d;border:1px solid #262626;border-radius:10px;padding:12px;cursor:pointer;text-align:center;transition:border-color .2s}
-.alert-red{background:rgba(217,85,85,.1);border:1px solid rgba(217,85,85,.3);border-radius:10px;padding:10px 14px;color:#d95555;font-size:.83rem;margin-bottom:8px}
-.alert-gold{background:rgba(201,168,76,.1);border:1px solid rgba(201,168,76,.3);border-radius:10px;padding:10px 14px;color:#c9a84c;font-size:.83rem;margin-bottom:8px}
-div[data-testid="stButton"] button{border-radius:10px;font-family:'DM Sans',sans-serif;font-weight:500;transition:all .2s}
+.calc-display{background:#1d1d1d;border:1px solid #262626;border-radius:12px;padding:16px;text-align:right;margin-bottom:10px}
+.calc-expr{font-size:.82rem;color:#777;min-height:20px}
+.calc-val{font-family:'Syne',sans-serif;font-weight:700;font-size:2rem;color:#c9a84c;word-break:break-all}
+div[data-testid="stButton"] button{border-radius:10px;font-family:'DM Sans',sans-serif;font-weight:500}
 </style>
 """, unsafe_allow_html=True)
 
@@ -50,53 +49,52 @@ st.caption("📅 " + datetime.now().strftime("%A, %d %B %Y  |  %H:%M"))
 st.divider()
 
 # ── SESSION STATE ─────────────────────────────────
-for key, val in {
+defaults = {
     "cart": [], "last_sale": None,
     "day_started": False, "sale_date": today(),
-    "day_sales": [], "scanned_code": ""
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = val
+    "calc_expr": "", "calc_display": "0",
+    "calc_result": ""
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # ── TABS ──────────────────────────────────────────
-tabs = st.tabs(["🛒 Sales", "📦 Stock", "📷 Scan", "📊 Reports", "💰 Expenses", "🏭 Suppliers", "💾 Backup"])
+tabs = st.tabs([
+    "🛒 Sales", "📦 Stock", "📊 Reports",
+    "💰 Expenses", "🧾 Credits", "🏭 Suppliers",
+    "🧮 Calculator", "💾 Backup"
+])
 
 # ══════════════════════════════════════════════════
 # TAB 1 — SALES
 # ══════════════════════════════════════════════════
 with tabs[0]:
 
-    # ── DAY CONTROL ───────────────────────────────
     if not st.session_state.day_started:
         st.markdown("### Start a Sales Day")
-        st.markdown("Select the date and start recording sales for the day.")
+        st.info("Select the date and press Start Day to begin recording sales.")
         col1, col2 = st.columns([2, 1])
         with col1:
-            sel_date = st.date_input(
-                "Sales Date",
-                value=datetime.now().date(),
-                key="date_picker"
-            )
+            sel_date = st.date_input("Sales Date", value=datetime.now().date(), key="date_picker")
         with col2:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("▶ Start Day", type="primary", use_container_width=True):
                 st.session_state.day_started = True
                 st.session_state.sale_date = str(sel_date)
                 st.session_state.cart = []
-                st.session_state.day_sales = []
                 st.rerun()
 
-        # Show previous day summary if exists
         st.divider()
         st.markdown("### Recent Sales")
-        recent = get_sales()[:5]
+        recent = get_sales()[:10]
         if recent:
             for s in recent:
-                items = get_sale_items([s["id"]])
-                names = ", ".join(set(it["product_name"] for it in items))
+                items_r = get_sale_items([s["id"]])
+                names = ", ".join(set(it["product_name"] for it in items_r))
                 c1, c2 = st.columns([3, 1])
                 with c1:
-                    st.write(f"**{s['date']}** at {s['time']} — {names}")
+                    st.write(f"**{s['date']}** at {s['time']} — {names[:40]}")
                 with c2:
                     st.write(fmt_ugx(s["total"]))
         else:
@@ -104,13 +102,10 @@ with tabs[0]:
 
     else:
         # ── ACTIVE DAY ────────────────────────────
-        day_sales_today = get_sales(
-            st.session_state.sale_date,
-            st.session_state.sale_date
-        )
-        day_total = sum(float(s.get("total", 0) or 0) for s in day_sales_today)
-        day_profit = sum(float(s.get("profit", 0) or 0) for s in day_sales_today)
-        day_count = len(day_sales_today)
+        day_sales = get_sales(st.session_state.sale_date, st.session_state.sale_date)
+        day_total = sum(float(s.get("total", 0) or 0) for s in day_sales)
+        day_profit = sum(float(s.get("profit", 0) or 0) for s in day_sales)
+        day_count = len(day_sales)
 
         st.markdown(f"""
         <div class="day-banner">
@@ -123,38 +118,12 @@ with tabs[0]:
         </div>
         """, unsafe_allow_html=True)
 
-        # Check if a barcode was scanned from Scan tab
-        if st.session_state.scanned_code:
-            code = st.session_state.scanned_code
-            prods = get_products()
-            match = [p for p in prods if str(p.get("barcode","") or "") == code]
-            if match:
-                p = match[0]
-                stk = int(p.get("stock", 0) or 0)
-                if stk > 0:
-                    found = False
-                    for item in st.session_state.cart:
-                        if item["id"] == p["id"]:
-                            item["qty"] += 1
-                            item["total"] = item["qty"] * item["price"]
-                            found = True
-                            break
-                    if not found:
-                        st.session_state.cart.append({
-                            "id": p["id"], "name": p["name"], "qty": 1,
-                            "price": float(p.get("selling_price", 0) or 0),
-                            "cost": float(p.get("buying_price", 0) or 0),
-                            "total": float(p.get("selling_price", 0) or 0)
-                        })
-                    st.success(f"✅ Added from scan: {p['name']}")
-            st.session_state.scanned_code = ""
-
         # Product search and quick add
         prods = get_products()
         search = st.text_input("🔍 Search product", placeholder="Type name or barcode...", key="pos_search")
         filtered = [p for p in prods if
                     search.lower() in p["name"].lower() or
-                    search in str(p.get("barcode","") or "")
+                    search in str(p.get("barcode", "") or "")
                     ] if search else prods
 
         if filtered:
@@ -164,9 +133,12 @@ with tabs[0]:
                 price = float(p.get("selling_price", 0) or 0)
                 icon = "🟢" if stk > 5 else "🟡" if stk > 0 else "🔴"
                 with cols[i % 2]:
-                    btn_label = f"**{p['name']}**\n{fmt_ugx(price)}\n{icon} Stock: {stk}"
-                    if st.button(btn_label, key=f"add_{p['id']}_{i}",
-                                 use_container_width=True, disabled=(stk <= 0)):
+                    if st.button(
+                        f"**{p['name']}**\n{fmt_ugx(price)}\n{icon} Stock: {stk}",
+                        key=f"add_{p['id']}_{i}",
+                        use_container_width=True,
+                        disabled=(stk <= 0)
+                    ):
                         found = False
                         for item in st.session_state.cart:
                             if item["id"] == p["id"]:
@@ -183,25 +155,17 @@ with tabs[0]:
                                 "total": price
                             })
                         st.rerun()
-        else:
-            if search:
-                st.warning("No products match your search.")
 
         st.divider()
 
         # ── LIVE SALES TABLE ──────────────────────
         st.markdown("### 📋 Current Sale")
-
         if not st.session_state.cart:
-            st.info("No items yet. Tap a product above or scan a barcode.")
+            st.info("No items yet. Tap a product above to add it.")
         else:
-            # Table header
             h1, h2, h3, h4, h5 = st.columns([3, 1, 2, 2, 1])
-            h1.markdown("**Item**")
-            h2.markdown("**Qty**")
-            h3.markdown("**Price**")
-            h4.markdown("**Total**")
-            h5.markdown("")
+            h1.markdown("**Item**"); h2.markdown("**Qty**")
+            h3.markdown("**Price**"); h4.markdown("**Total**"); h5.markdown("")
             st.divider()
 
             to_del = []
@@ -244,8 +208,7 @@ with tabs[0]:
                     st.rerun()
             with c3:
                 if st.button("🧾 Receipt", use_container_width=True):
-                    if st.session_state.last_sale:
-                        st.session_state.show_receipt = True
+                    pass
             with c4:
                 if st.button("✅ Checkout", use_container_width=True, type="primary"):
                     with st.spinner("Saving..."):
@@ -261,15 +224,15 @@ with tabs[0]:
                             st.success(f"✅ Sale saved! {fmt_ugx(total)}")
                             st.rerun()
 
-        # ── TODAY'S TRANSACTIONS TABLE ────────────
+        # ── TODAY'S FULL LOG ──────────────────────
         st.divider()
         st.markdown("### 📋 Today's Full Sales Log")
-        if day_sales_today:
-            all_items = get_sale_items([s["id"] for s in day_sales_today])
+        if day_sales:
+            all_items = get_sale_items([s["id"] for s in day_sales])
             rows = []
-            for s in day_sales_today:
+            for s in day_sales:
                 s_items = [it for it in all_items if it["sale_id"] == s["id"]]
-                for j, it in enumerate(s_items):
+                for it in s_items:
                     rows.append({
                         "#": len(rows) + 1,
                         "Time": s["time"],
@@ -279,18 +242,13 @@ with tabs[0]:
                         "Total": fmt_ugx(it["line_total"])
                     })
             if rows:
-                st.dataframe(
-                    pd.DataFrame(rows),
-                    use_container_width=True,
-                    hide_index=True
-                )
-                # Day totals
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Day Revenue", fmt_ugx(day_total))
                 c2.metric("Day Profit", fmt_ugx(day_profit))
                 c3.metric("Transactions", day_count)
         else:
-            st.info("No sales recorded today yet.")
+            st.info("No sales recorded for this day yet.")
 
         # ── RECEIPT ───────────────────────────────
         if st.session_state.last_sale:
@@ -309,9 +267,10 @@ with tabs[0]:
             rcpt += f"{line}\nTOTAL:  {fmt_ugx(s['total'])}\n{line}\n"
             rcpt += "   Thank you for shopping!\n   DEBONUEL - Your trusted shop"
             st.markdown(f'<div class="rcpt">{rcpt}</div>', unsafe_allow_html=True)
+
             r1, r2, r3 = st.columns(3)
             with r1:
-                st.download_button("⬇ Receipt", rcpt,
+                st.download_button("⬇ Download Receipt", rcpt,
                                    file_name=f"Receipt_{s['id'][:8]}.txt",
                                    use_container_width=True)
             with r2:
@@ -319,33 +278,32 @@ with tabs[0]:
                 for it in s["items"]:
                     wa += f"- {it['name']} x{it['qty']}: {fmt_ugx(it['total'])}\n"
                 wa += f"*TOTAL: {fmt_ugx(s['total'])}*\nThank you for shopping at DEBONUEL!"
-                st.link_button("💬 WhatsApp",
+                st.link_button("💬 WhatsApp Receipt",
                                "https://wa.me/?text=" + wa.replace(" ", "%20").replace("\n", "%0A"),
                                use_container_width=True)
             with r3:
-                st.download_button("🖨 Print (HTML)", f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Receipt</title>
-<style>body{{font-family:monospace;font-size:13px;padding:16px;max-width:300px;margin:0 auto;white-space:pre}}
-@media print{{@page{{margin:4mm}}}}</style></head>
-<body onload="window.print()">{rcpt}</body></html>""",
-                                   file_name=f"Print_Receipt_{s['id'][:8]}.html",
-                                   mime="text/html",
-                                   use_container_width=True)
+                st.download_button("🖨 Print Receipt",
+                                   f'<html><head><style>body{{font-family:monospace;font-size:13px;padding:16px;max-width:300px;margin:0 auto;white-space:pre}}</style></head><body onload="window.print()">{rcpt}</body></html>',
+                                   file_name=f"Print_{s['id'][:8]}.html",
+                                   mime="text/html", use_container_width=True)
 
         # ── END DAY ───────────────────────────────
         st.divider()
         if st.button("⏹ End Day & Close Sales", use_container_width=True):
+            wa_summary = (
+                f"*DEBONUEL Day Summary — {st.session_state.sale_date}*\n\n"
+                f"Revenue: {fmt_ugx(day_total)}\n"
+                f"Profit: {fmt_ugx(day_profit)}\n"
+                f"Total Sales: {day_count}\n\n"
+                f"_DEBONUEL Business System_"
+            )
+            st.success(f"Day closed! Revenue: {fmt_ugx(day_total)} | Profit: {fmt_ugx(day_profit)}")
+            st.link_button(
+                "💬 Share Day Summary on WhatsApp",
+                "https://wa.me/?text=" + wa_summary.replace(" ", "%20").replace("\n", "%0A")
+            )
             st.session_state.day_started = False
             st.session_state.cart = []
-            wa_summary = f"*DEBONUEL Day Summary — {st.session_state.sale_date}*\n\n"
-            wa_summary += f"Revenue: {fmt_ugx(day_total)}\n"
-            wa_summary += f"Profit: {fmt_ugx(day_profit)}\n"
-            wa_summary += f"Total Sales: {day_count}\n\n"
-            wa_summary += "_DEBONUEL Business System_"
-            st.success(f"Day closed! Revenue: {fmt_ugx(day_total)} | Profit: {fmt_ugx(day_profit)}")
-            st.link_button("💬 Share Day Summary on WhatsApp",
-                           "https://wa.me/?text=" + wa_summary.replace(" ", "%20").replace("\n", "%0A"))
-            st.rerun()
 
 # ══════════════════════════════════════════════════
 # TAB 2 — STOCK
@@ -358,9 +316,18 @@ with tabs[1]:
     low = [p for p in prods if 0 < int(p.get("stock", 0) or 0) <= 5]
     out = [p for p in prods if int(p.get("stock", 0) or 0) <= 0]
     if out:
-        st.markdown(f'<div class="alert-red">🔴 OUT OF STOCK: {", ".join(p["name"] for p in out)}</div>', unsafe_allow_html=True)
+        st.error(f"🔴 OUT OF STOCK: {', '.join(p['name'] for p in out)}")
     if low:
-        st.markdown(f'<div class="alert-gold">⚠ LOW STOCK: {", ".join(p["name"] + " (" + str(int(p.get("stock",0) or 0)) + ")" for p in low)}</div>', unsafe_allow_html=True)
+        st.warning(f"⚠ LOW STOCK: {', '.join(p['name'] + ' (' + str(int(p.get('stock',0) or 0)) + ')' for p in low)}")
+
+    # WhatsApp reorder alert
+    if low or out:
+        low_list = "\n".join(f"- {p['name']} (stock: {int(p.get('stock',0) or 0)})" for p in (out + low))
+        wa_reorder = f"*DEBONUEL Stock Alert*\n\nThe following items need restocking:\n{low_list}\n\nPlease supply urgently.\n_DEBONUEL Shop_"
+        st.link_button(
+            "📲 Send Reorder Alert via WhatsApp",
+            "https://wa.me/?text=" + wa_reorder.replace(" ", "%20").replace("\n", "%0A")
+        )
 
     with st.expander("➕ Add New Product"):
         with st.form("new_prod"):
@@ -371,13 +338,13 @@ with tabs[1]:
                 pq = st.number_input("Opening Stock", min_value=0, value=0)
                 pbc = st.text_input("Barcode (optional)")
             with c2:
-                pcat = st.selectbox("Category", ["General","Food and Drinks",
-                                                  "Household","Personal Care",
-                                                  "Electronics","Other"])
+                pcat = st.selectbox("Category", ["General", "Food and Drinks",
+                                                  "Household", "Personal Care",
+                                                  "Electronics", "Other"])
                 ps_price = st.number_input("Selling Price (UGX)", min_value=0, value=0)
                 sup_names = ["None"] + [s["name"] for s in sups]
                 psup = st.selectbox("Supplier", sup_names)
-                pmin = st.number_input("Reorder Level (alert when stock hits this)", min_value=0, value=5)
+                pmin = st.number_input("Reorder Level", min_value=0, value=5)
 
             if st.form_submit_button("✅ Save Product", type="primary"):
                 if not pn:
@@ -420,7 +387,7 @@ with tabs[1]:
                 c1, c2, c3 = st.columns([3, 2, 1])
                 with c1:
                     st.markdown(f"**{p['name']}**{lbl}")
-                    st.caption(f"{p.get('category','')} | Buy: {fmt_ugx(buy)} | Sell: {fmt_ugx(sell)} | Margin: {mg}%")
+                    st.caption(f"{p.get('category', '')} | Buy: {fmt_ugx(buy)} | Sell: {fmt_ugx(sell)} | Margin: {mg}%")
                     if p.get("barcode"):
                         st.caption(f"Barcode: {p['barcode']}")
                 with c2:
@@ -432,7 +399,7 @@ with tabs[1]:
                             eb = st.number_input("Buy Price", value=buy, min_value=0.0)
                             es = st.number_input("Sell Price", value=sell, min_value=0.0)
                             eq = st.number_input("Stock", value=stk, min_value=0)
-                            ebc = st.text_input("Barcode", value=str(p.get("barcode","") or ""))
+                            ebc = st.text_input("Barcode", value=str(p.get("barcode", "") or ""))
                             cs2, cd2 = st.columns(2)
                             with cs2:
                                 if st.form_submit_button("Save"):
@@ -449,96 +416,12 @@ with tabs[1]:
                 st.divider()
 
 # ══════════════════════════════════════════════════
-# TAB 3 — SCAN
+# TAB 3 — REPORTS
 # ══════════════════════════════════════════════════
 with tabs[2]:
-    st.subheader("📷 Barcode Scanner")
-
-    # ── HOW SCANNING WORKS ────────────────────────
-    st.info(
-        "**How to scan a barcode:**\n\n"
-        "1. Click the **Open Scanner** button below — it opens a scanner page in a new tab\n"
-        "2. Allow camera access when asked\n"
-        "3. Point your camera at the barcode — it reads automatically\n"
-        "4. The barcode number appears on screen — copy it\n"
-        "5. Come back here and paste it in the box below"
-    )
-
-    SCANNER_URL = "https://elias-opolot.github.io/debonuel/scanner.html"
-
-    st.link_button(
-        "📷 Open Camera Scanner",
-        SCANNER_URL,
-        use_container_width=True
-    )
-
-    st.divider()
-
-    # Manual barcode entry
-    st.markdown("### Enter Barcode Number")
-    st.caption("After scanning, paste the barcode number here to find the product.")
-    bc = st.text_input("Type or paste barcode number", placeholder="e.g. 6001255", key="manual_bc")
-    if bc:
-        prods = get_products()
-        match = [p for p in prods if str(p.get("barcode","") or "") == bc.strip()]
-        if match:
-            p = match[0]
-            stk = int(p.get("stock", 0) or 0)
-            st.success(f"✅ Found: **{p['name']}**")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Selling Price", fmt_ugx(p["selling_price"]))
-            c2.metric("Buying Price", fmt_ugx(p.get("buying_price", 0)))
-            c3.metric("Stock", stk)
-            if stk > 0:
-                if st.button("➕ Add to Current Sale", type="primary", use_container_width=True):
-                    if not st.session_state.day_started:
-                        st.warning("Start a sales day first in the Sales tab.")
-                    else:
-                        found = False
-                        for item in st.session_state.cart:
-                            if item["id"] == p["id"]:
-                                item["qty"] += 1
-                                item["total"] = item["qty"] * float(p["selling_price"])
-                                found = True
-                                break
-                        if not found:
-                            st.session_state.cart.append({
-                                "id": p["id"], "name": p["name"], "qty": 1,
-                                "price": float(p["selling_price"]),
-                                "cost": float(p.get("buying_price", 0) or 0),
-                                "total": float(p["selling_price"])
-                            })
-                        st.success(f"Added {p['name']} to sale! Go to Sales tab.")
-            else:
-                st.error("This product is out of stock.")
-        elif bc:
-            st.warning(f"No product found with barcode: {bc}")
-            st.info("You can assign this barcode to a product below.")
-
-    st.divider()
-    st.markdown("### Assign Barcode to Product")
-    prods = get_products()
-    if prods:
-        with st.form("asgn_bc"):
-            bc2 = st.text_input("Barcode number")
-            psel = st.selectbox("Select Product", [p["name"] for p in prods])
-            if st.form_submit_button("Assign Barcode", type="primary"):
-                if bc2 and psel:
-                    for p in prods:
-                        if p["name"] == psel:
-                            update_product(p["id"], {"barcode": bc2})
-                            st.success(f"✅ Barcode '{bc2}' assigned to {psel}!")
-                            break
-    else:
-        st.info("Add products first in the Stock tab.")
-
-# ══════════════════════════════════════════════════
-# TAB 4 — REPORTS
-# ══════════════════════════════════════════════════
-with tabs[3]:
     st.subheader("📊 Reports")
 
-    period = st.radio("Period", ["Daily","Weekly","Monthly","Yearly"], horizontal=True)
+    period = st.radio("Period", ["Daily", "Weekly", "Monthly", "Yearly"], horizontal=True)
     today_dt = datetime.now().date()
 
     if period == "Daily":
@@ -586,7 +469,7 @@ with tabs[3]:
         df_sales = pd.DataFrame(sales)
         df_sales["total"] = pd.to_numeric(df_sales["total"], errors="coerce")
         chart_data = df_sales.groupby("date")["total"].sum().reset_index()
-        chart_data.columns = ["Date","Revenue"]
+        chart_data.columns = ["Date", "Revenue"]
         fig = px.bar(chart_data, x="Date", y="Revenue", title=f"Sales — {label}",
                      color_discrete_sequence=["#c9a84c"])
         fig.update_layout(plot_bgcolor="#0b0b0b", paper_bgcolor="#0b0b0b",
@@ -598,14 +481,32 @@ with tabs[3]:
             df_it = pd.DataFrame(items)
             df_it["qty"] = pd.to_numeric(df_it["qty"], errors="coerce")
             df_it["line_total"] = pd.to_numeric(df_it["line_total"], errors="coerce")
-            top = df_it.groupby("product_name")["qty"].sum().reset_index()
-            top.columns = ["Product","Units Sold"]
-            top = top.sort_values("Units Sold", ascending=False).head(10)
-            fig2 = px.bar(top, x="Units Sold", y="Product", orientation="h",
-                          title="Top Products", color_discrete_sequence=["#c9a84c"])
-            fig2.update_layout(plot_bgcolor="#0b0b0b", paper_bgcolor="#0b0b0b",
-                               font_color="#f2ede4", yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig2, use_container_width=True)
+
+            # Top products by quantity
+            top_qty = df_it.groupby("product_name")["qty"].sum().reset_index()
+            top_qty.columns = ["Product", "Units Sold"]
+            top_qty = top_qty.sort_values("Units Sold", ascending=False).head(10)
+
+            # Top products by revenue
+            top_rev = df_it.groupby("product_name")["line_total"].sum().reset_index()
+            top_rev.columns = ["Product", "Revenue"]
+            top_rev = top_rev.sort_values("Revenue", ascending=False).head(10)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                fig2 = px.bar(top_qty, x="Units Sold", y="Product", orientation="h",
+                              title="Top by Units Sold",
+                              color_discrete_sequence=["#c9a84c"])
+                fig2.update_layout(plot_bgcolor="#0b0b0b", paper_bgcolor="#0b0b0b",
+                                   font_color="#f2ede4", yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig2, use_container_width=True)
+            with col2:
+                fig3 = px.bar(top_rev, x="Revenue", y="Product", orientation="h",
+                              title="Top by Revenue",
+                              color_discrete_sequence=["#4caf7d"])
+                fig3.update_layout(plot_bgcolor="#0b0b0b", paper_bgcolor="#0b0b0b",
+                                   font_color="#f2ede4", yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig3, use_container_width=True)
 
             st.markdown("### Full Transaction Log")
             log_rows = []
@@ -623,6 +524,7 @@ with tabs[3]:
                 st.dataframe(pd.DataFrame(log_rows), use_container_width=True, hide_index=True)
 
         st.divider()
+        # Download and share
         c1, c2, c3 = st.columns(3)
         with c1:
             csv_d = pd.DataFrame(log_rows).to_csv(index=False) if items else ""
@@ -630,82 +532,100 @@ with tabs[3]:
                                file_name=f"DEBONUEL_{label}.csv",
                                mime="text/csv", use_container_width=True)
         with c2:
-            html_r = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>DEBONUEL Report</title>
-<style>body{{font-family:sans-serif;max-width:700px;margin:0 auto;padding:24px}}h1{{color:#c9a84c}}
-table{{width:100%;border-collapse:collapse}}th{{background:#f5f2ec;padding:8px;text-align:left}}
+            html_r = f"""<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>DEBONUEL Report</title>
+<style>body{{font-family:sans-serif;max-width:700px;margin:0 auto;padding:24px}}
+h1{{color:#c9a84c}}table{{width:100%;border-collapse:collapse}}
+th{{background:#f5f2ec;padding:8px;text-align:left}}
 td{{padding:8px;border-bottom:1px solid #eee}}</style></head><body>
-<h1>DEBONUEL</h1><h2>Report &mdash; {label}</h2>
+<h1>DEBONUEL</h1><h2>Report - {label}</h2>
 <p>Revenue: {fmt_ugx(rev)} | Profit: {fmt_ugx(prof)} | Sales: {cnt} | Margin: {mg}%</p>
 <table><tr><th>Date</th><th>Time</th><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>
 {"".join(f"<tr><td>{r['Date']}</td><td>{r['Time']}</td><td>{r['Item']}</td><td>{r['Qty']}</td><td>{r['Unit Price']}</td><td>{r['Total']}</td></tr>" for r in log_rows)}
 </table></body></html>"""
-            st.download_button("⬇ Report HTML", html_r,
+            st.download_button("⬇ Report", html_r,
                                file_name=f"DEBONUEL_Report_{label}.html",
                                mime="text/html", use_container_width=True)
         with c3:
-            wa = f"*DEBONUEL Report - {label}*\n\nRevenue: {fmt_ugx(rev)}\nProfit: {fmt_ugx(prof)}\nMargin: {mg}%\nSales: {cnt}\n\n_DEBONUEL Business System_"
+            wa = (
+                f"*DEBONUEL Report - {label}*\n\n"
+                f"Revenue: {fmt_ugx(rev)}\n"
+                f"Profit: {fmt_ugx(prof)}\n"
+                f"Margin: {mg}%\n"
+                f"Sales: {cnt}\n\n"
+                f"_DEBONUEL Business System_"
+            )
             st.link_button("💬 WhatsApp",
-                           "https://wa.me/?text=" + wa.replace(" ","%20").replace("\n","%0A"),
+                           "https://wa.me/?text=" + wa.replace(" ", "%20").replace("\n", "%0A"),
                            use_container_width=True)
     else:
         st.info("No sales data for this period.")
 
 # ══════════════════════════════════════════════════
-# TAB 5 — EXPENSES
+# TAB 4 — EXPENSES
 # ══════════════════════════════════════════════════
-with tabs[4]:
+with tabs[3]:
     st.subheader("💰 Expenses Tracker")
-    st.caption("Track your daily business expenses to see your true net profit.")
+    st.caption("Track daily expenses to calculate your true net profit.")
 
     with st.form("add_exp"):
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         with c1:
             exp_date = st.date_input("Date", value=datetime.now().date())
             exp_cat = st.selectbox("Category", [
-                "Stock Purchase","Rent","Electricity","Water",
-                "Transport","Staff Salary","Packaging","Other"
+                "Stock Purchase", "Rent", "Electricity", "Water",
+                "Transport", "Staff Salary", "Packaging", "Other"
             ])
+            exp_amt = st.number_input("Amount (UGX)", min_value=0, value=0)
         with c2:
             exp_desc = st.text_input("Description", placeholder="e.g. Bought sugar from supplier")
-            exp_amt = st.number_input("Amount (UGX)", min_value=0, value=0)
-        with c3:
-            exp_supplier = st.text_input("Supplier / Paid To", placeholder="optional")
+            exp_sup = st.text_input("Paid To", placeholder="e.g. Supplier name")
             st.markdown("<br>", unsafe_allow_html=True)
             save_exp = st.form_submit_button("✅ Save Expense", type="primary", use_container_width=True)
 
         if save_exp:
             if exp_amt <= 0:
-                st.error("Enter an amount")
+                st.error("Enter an amount greater than 0")
             else:
-                from db import get_client
-                get_client().table("expenses").insert({
-                    "id": uid(),
-                    "date": str(exp_date),
-                    "category": exp_cat,
-                    "description": exp_desc,
-                    "amount": exp_amt,
-                    "supplier": exp_supplier,
-                    "created_at": datetime.now().isoformat()
-                }).execute()
-                st.success(f"Expense saved: {fmt_ugx(exp_amt)}")
-                st.rerun()
+                try:
+                    get_client().table("expenses").insert({
+                        "id": uid(), "date": str(exp_date),
+                        "category": exp_cat, "description": exp_desc,
+                        "amount": exp_amt, "supplier": exp_sup,
+                        "created_at": datetime.now().isoformat()
+                    }).execute()
+                    st.success(f"Expense saved: {fmt_ugx(exp_amt)}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
     st.divider()
-
-    # Show expenses
     try:
-        from db import get_client
-        exp_start = st.date_input("Show expenses from", value=datetime.now().date().replace(day=1))
-        exp_end = st.date_input("To", value=datetime.now().date())
-        exps = get_client().table("expenses").select("*")\
-            .gte("date", str(exp_start)).lte("date", str(exp_end))\
+        col1, col2 = st.columns(2)
+        with col1:
+            exp_start = st.date_input("From", value=datetime.now().date().replace(day=1), key="exp_s")
+        with col2:
+            exp_end = st.date_input("To", value=datetime.now().date(), key="exp_e")
+
+        exps = get_client().table("expenses").select("*") \
+            .gte("date", str(exp_start)).lte("date", str(exp_end)) \
             .order("date", desc=True).execute().data or []
 
         if exps:
-            total_exp = sum(float(e.get("amount",0) or 0) for e in exps)
-            st.metric("Total Expenses", fmt_ugx(total_exp))
+            total_exp = sum(float(e.get("amount", 0) or 0) for e in exps)
 
-            # Expenses by category chart
+            # Get sales for same period for net profit
+            sales_p = get_sales(str(exp_start), str(exp_end))
+            gross = sum(float(s.get("profit", 0) or 0) for s in sales_p)
+            net = gross - total_exp
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Gross Profit", fmt_ugx(gross))
+            c2.metric("Total Expenses", fmt_ugx(total_exp))
+            net_color = "normal" if net >= 0 else "inverse"
+            c3.metric("Net Profit", fmt_ugx(net))
+
+            # Expenses chart
             df_exp = pd.DataFrame(exps)
             df_exp["amount"] = pd.to_numeric(df_exp["amount"], errors="coerce")
             by_cat = df_exp.groupby("category")["amount"].sum().reset_index()
@@ -715,30 +635,136 @@ with tabs[4]:
             fig_e.update_layout(paper_bgcolor="#0b0b0b", font_color="#f2ede4")
             st.plotly_chart(fig_e, use_container_width=True)
 
-            # Profit vs Expenses
-            sales_period = get_sales(str(exp_start), str(exp_end))
-            gross_profit = sum(float(s.get("profit",0) or 0) for s in sales_period)
-            net_profit = gross_profit - total_exp
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Gross Profit", fmt_ugx(gross_profit))
-            c2.metric("Total Expenses", fmt_ugx(total_exp))
-            c3.metric("Net Profit", fmt_ugx(net_profit),
-                      delta=f"{'+' if net_profit >= 0 else ''}{fmt_ugx(net_profit)}")
-
             st.divider()
             for e in exps:
                 c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
-                c1.write(f"**{e['date']}** — {e.get('description','')}")
-                c2.write(e.get("category",""))
-                c3.write(fmt_ugx(e.get("amount",0)))
+                c1.write(f"**{e['date']}** — {e.get('description', '')}")
+                c2.write(e.get("category", ""))
+                c3.write(fmt_ugx(e.get("amount", 0)))
                 with c4:
                     if st.button("🗑", key=f"de_{e['id']}"):
                         get_client().table("expenses").delete().eq("id", e["id"]).execute()
                         st.rerun()
+
+            # WhatsApp expense summary
+            wa_exp = (
+                f"*DEBONUEL Expense Summary*\n"
+                f"Period: {exp_start} to {exp_end}\n\n"
+                f"Gross Profit: {fmt_ugx(gross)}\n"
+                f"Total Expenses: {fmt_ugx(total_exp)}\n"
+                f"Net Profit: {fmt_ugx(net)}\n\n"
+            )
+            for cat, amt in by_cat.values:
+                wa_exp += f"- {cat}: {fmt_ugx(amt)}\n"
+            wa_exp += "\n_DEBONUEL Business System_"
+            st.link_button(
+                "💬 Share Expense Summary on WhatsApp",
+                "https://wa.me/?text=" + wa_exp.replace(" ", "%20").replace("\n", "%0A")
+            )
         else:
-            st.info("No expenses recorded for this period.")
+            st.info("No expenses for this period.")
     except Exception as ex:
-        st.warning("Expenses table not set up yet. Run the setup SQL again with the expenses table added.")
+        st.warning(f"Run the update_database.sql first to enable expenses. Error: {ex}")
+
+# ══════════════════════════════════════════════════
+# TAB 5 — CREDITS / DEBT TRACKER
+# ══════════════════════════════════════════════════
+with tabs[4]:
+    st.subheader("🧾 Credit / Debt Tracker")
+    st.caption("Track customers who buy on credit and what they owe you.")
+
+    with st.expander("➕ Add Credit Sale"):
+        with st.form("add_credit"):
+            c1, c2 = st.columns(2)
+            with c1:
+                cr_name = st.text_input("Customer Name *")
+                cr_phone = st.text_input("Phone", placeholder="+256...")
+                cr_date = st.date_input("Date", value=datetime.now().date())
+            with c2:
+                cr_items = st.text_area("Items Bought", placeholder="e.g. 2kg Sugar, 1L Oil")
+                cr_amt = st.number_input("Amount Owed (UGX)", min_value=0, value=0)
+                cr_due = st.date_input("Due Date")
+
+            if st.form_submit_button("✅ Record Credit", type="primary"):
+                if not cr_name or cr_amt <= 0:
+                    st.error("Enter customer name and amount")
+                else:
+                    try:
+                        get_client().table("credits").insert({
+                            "id": uid(), "customer_name": cr_name,
+                            "phone": cr_phone, "date": str(cr_date),
+                            "items": cr_items, "amount": cr_amt,
+                            "paid": 0, "due_date": str(cr_due),
+                            "status": "unpaid",
+                            "created_at": datetime.now().isoformat()
+                        }).execute()
+                        st.success(f"Credit recorded for {cr_name}: {fmt_ugx(cr_amt)}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}. Run the SQL update first.")
+
+    st.divider()
+
+    try:
+        credits = get_client().table("credits").select("*") \
+            .order("date", desc=True).execute().data or []
+
+        if credits:
+            total_owed = sum(float(c.get("amount", 0) or 0) - float(c.get("paid", 0) or 0)
+                             for c in credits if c.get("status") != "paid")
+            unpaid = [c for c in credits if c.get("status") != "paid"]
+            paid = [c for c in credits if c.get("status") == "paid"]
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Owed to You", fmt_ugx(total_owed))
+            c2.metric("Unpaid Credits", len(unpaid))
+            c3.metric("Paid Credits", len(paid))
+
+            if unpaid:
+                st.markdown("### ⚠ Unpaid Credits")
+                for c in unpaid:
+                    bal = float(c.get("amount", 0) or 0) - float(c.get("paid", 0) or 0)
+                    st.markdown(f"""<div class="debtcard">
+                    <strong>{c['customer_name']}</strong> — owes <strong style="color:#d95555">{fmt_ugx(bal)}</strong><br>
+                    <small>📞 {c.get('phone','-')} | Date: {c['date']} | Due: {c.get('due_date','-')}<br>
+                    Items: {c.get('items','-')}</small></div>""", unsafe_allow_html=True)
+
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if c.get("phone"):
+                            ph = str(c["phone"]).replace("+", "").replace(" ", "").replace("-", "")
+                            wa_remind = (
+                                f"Hello {c['customer_name']}, this is a reminder from DEBONUEL. "
+                                f"You have an outstanding balance of {fmt_ugx(bal)} "
+                                f"for {c.get('items','')}. "
+                                f"Please pay by {c.get('due_date','')}. Thank you!"
+                            )
+                            st.link_button(
+                                "💬 Send Reminder",
+                                f"https://wa.me/{ph}?text={wa_remind.replace(' ', '%20')}",
+                                use_container_width=True
+                            )
+                    with col2:
+                        if st.button("✅ Mark Paid", key=f"paid_{c['id']}", use_container_width=True):
+                            get_client().table("credits").update({
+                                "status": "paid", "paid": c.get("amount", 0)
+                            }).eq("id", c["id"]).execute()
+                            st.rerun()
+                    with col3:
+                        if st.button("🗑 Delete", key=f"dcr_{c['id']}", use_container_width=True):
+                            get_client().table("credits").delete().eq("id", c["id"]).execute()
+                            st.rerun()
+                    st.divider()
+
+            if paid:
+                with st.expander("✅ Paid Credits"):
+                    for c in paid:
+                        st.write(f"**{c['customer_name']}** — {fmt_ugx(c.get('amount', 0))} — Paid ✅")
+        else:
+            st.info("No credit records yet. Add one above.")
+
+    except Exception as ex:
+        st.warning(f"Run the SQL update to enable credits tracking. Error: {ex}")
 
 # ══════════════════════════════════════════════════
 # TAB 6 — SUPPLIERS
@@ -755,16 +781,17 @@ with tabs[5]:
                 spr = st.text_input("Products Supplied")
             with c2:
                 slc = st.text_input("Location")
-                stm = st.selectbox("Payment Terms", ["Cash on Delivery","30 Days Credit",
-                                                      "60 Days Credit","Prepayment","Other"])
+                stm = st.selectbox("Payment Terms", ["Cash on Delivery", "30 Days Credit",
+                                                      "60 Days Credit", "Prepayment", "Other"])
                 snt = st.text_area("Notes")
             if st.form_submit_button("✅ Save Supplier", type="primary"):
                 if not sn:
                     st.error("Enter supplier name")
                 else:
                     ok = add_supplier({
-                        "name": sn, "phone": sph, "products_supplied": spr,
-                        "location": slc, "payment_terms": stm, "notes": snt
+                        "name": sn, "phone": sph,
+                        "products_supplied": spr, "location": slc,
+                        "payment_terms": stm, "notes": snt
                     })
                     if ok:
                         st.success(f"'{sn}' added!")
@@ -776,24 +803,205 @@ with tabs[5]:
         st.info("No suppliers yet.")
     else:
         for s in sups:
-            st.markdown(f'<div class="supcard"><strong>{s["name"]}</strong><br><small>📞 {s.get("phone","-")} &nbsp;|&nbsp; 📍 {s.get("location","-")}<br>📦 {s.get("products_supplied","-")} &nbsp;|&nbsp; 💳 {s.get("payment_terms","-")}{("<br>📝 " + str(s["notes"])) if s.get("notes") else ""}</small></div>', unsafe_allow_html=True)
-            c1, c2 = st.columns(2)
+            st.markdown(f'<div class="supcard"><strong>{s["name"]}</strong><br><small>📞 {s.get("phone", "-")} &nbsp;|&nbsp; 📍 {s.get("location", "-")}<br>📦 {s.get("products_supplied", "-")} &nbsp;|&nbsp; 💳 {s.get("payment_terms", "-")}{("<br>📝 " + str(s["notes"])) if s.get("notes") else ""}</small></div>', unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
             with c1:
                 if s.get("phone"):
-                    ph = str(s["phone"]).replace("+","").replace(" ","").replace("-","")
+                    ph = str(s["phone"]).replace("+", "").replace(" ", "").replace("-", "")
                     st.link_button("💬 WhatsApp", f"https://wa.me/{ph}", use_container_width=True)
             with c2:
+                if s.get("phone"):
+                    order_msg = (
+                        f"Hello {s['name']}, I would like to order the following items for DEBONUEL shop. "
+                        f"Please confirm availability and price. Thank you!"
+                    )
+                    st.link_button(
+                        "🛒 Send Order",
+                        f"https://wa.me/{ph}?text={order_msg.replace(' ', '%20')}",
+                        use_container_width=True
+                    )
+            with c3:
                 if st.button("🗑 Delete", key=f"ds_{s['id']}", use_container_width=True):
                     delete_supplier(s["id"])
                     st.rerun()
             st.divider()
 
 # ══════════════════════════════════════════════════
-# TAB 7 — BACKUP
+# TAB 7 — CALCULATOR
 # ══════════════════════════════════════════════════
 with tabs[6]:
+    st.subheader("🧮 Business Calculator")
+    st.caption("Quick calculator for prices, profits and quantities.")
+
+    # Display
+    st.markdown(f"""
+    <div class="calc-display">
+        <div class="calc-expr">{st.session_state.calc_expr}</div>
+        <div class="calc-val">{st.session_state.calc_display}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Calculator buttons
+    def calc_btn(label, col, btn_type="dark"):
+        colors = {
+            "gold": "background-color:#c9a84c;color:#000;",
+            "red": "background-color:#d95555;color:#fff;",
+            "dark": "background-color:#1d1d1d;color:#f2ede4;border:1px solid #262626;",
+            "green": "background-color:#4caf7d;color:#fff;"
+        }
+        return col.button(label, use_container_width=True, key=f"calc_{label}_{btn_type}")
+
+    rows = [
+        ["C", "±", "%", "÷"],
+        ["7", "8", "9", "×"],
+        ["4", "5", "6", "−"],
+        ["1", "2", "3", "+"],
+        ["0", ".", "⌫", "="]
+    ]
+
+    for row in rows:
+        cols = st.columns(4)
+        for j, btn in enumerate(row):
+            with cols[j]:
+                btn_type = "gold" if btn == "=" else "red" if btn == "C" else "green" if btn in ["÷","×","−","+","%"] else "dark"
+                color_map = {
+                    "gold": "#c9a84c", "red": "#d95555",
+                    "green": "#4caf7d", "dark": "#1d1d1d"
+                }
+                text_map = {"gold": "#000", "red": "#fff", "green": "#fff", "dark": "#f2ede4"}
+                if st.button(
+                    btn,
+                    key=f"c_{btn}_{j}",
+                    use_container_width=True
+                ):
+                    expr = st.session_state.calc_expr
+                    disp = st.session_state.calc_display
+
+                    if btn == "C":
+                        st.session_state.calc_expr = ""
+                        st.session_state.calc_display = "0"
+                    elif btn == "⌫":
+                        if expr:
+                            st.session_state.calc_expr = expr[:-1]
+                            st.session_state.calc_display = expr[:-1] if expr[:-1] else "0"
+                    elif btn == "=":
+                        try:
+                            safe = expr.replace("×", "*").replace("÷", "/").replace("−", "-")
+                            result = eval(safe)
+                            if isinstance(result, float) and result.is_integer():
+                                result = int(result)
+                            st.session_state.calc_result = str(result)
+                            st.session_state.calc_display = f"{result:,}" if isinstance(result, int) else f"{result:,.2f}"
+                            st.session_state.calc_expr = str(result)
+                        except:
+                            st.session_state.calc_display = "Error"
+                            st.session_state.calc_expr = ""
+                    elif btn == "±":
+                        try:
+                            val = float(expr.replace(",", "")) * -1
+                            st.session_state.calc_expr = str(val)
+                            st.session_state.calc_display = str(val)
+                        except:
+                            pass
+                    elif btn == "%":
+                        try:
+                            val = float(expr.replace(",", "")) / 100
+                            st.session_state.calc_expr = str(val)
+                            st.session_state.calc_display = str(val)
+                        except:
+                            pass
+                    else:
+                        new_expr = expr + btn
+                        st.session_state.calc_expr = new_expr
+                        st.session_state.calc_display = new_expr
+                    st.rerun()
+
+    st.divider()
+
+    # Business calculators
+    st.markdown("### 💡 Quick Business Tools")
+
+    tool = st.selectbox("Select tool", [
+        "Profit Margin Calculator",
+        "Selling Price Calculator",
+        "VAT Calculator",
+        "Percentage Change Calculator",
+        "Bulk Discount Calculator"
+    ])
+
+    if tool == "Profit Margin Calculator":
+        c1, c2 = st.columns(2)
+        with c1:
+            buy_p = st.number_input("Buying Price (UGX)", min_value=0, value=0, key="t1_buy")
+        with c2:
+            sell_p = st.number_input("Selling Price (UGX)", min_value=0, value=0, key="t1_sell")
+        if sell_p > 0:
+            profit_amt = sell_p - buy_p
+            margin = (profit_amt / sell_p) * 100
+            markup = (profit_amt / buy_p * 100) if buy_p > 0 else 0
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Profit per Unit", fmt_ugx(profit_amt))
+            c2.metric("Margin %", f"{margin:.1f}%")
+            c3.metric("Markup %", f"{markup:.1f}%")
+
+    elif tool == "Selling Price Calculator":
+        c1, c2 = st.columns(2)
+        with c1:
+            cost = st.number_input("Buying Price (UGX)", min_value=0, value=0, key="t2_cost")
+        with c2:
+            target_margin = st.number_input("Target Margin %", min_value=0, max_value=100, value=20, key="t2_mg")
+        if cost > 0 and target_margin < 100:
+            suggested = cost / (1 - target_margin / 100)
+            st.success(f"Suggested Selling Price: **{fmt_ugx(round(suggested))}**")
+            st.caption(f"Profit per unit: {fmt_ugx(round(suggested - cost))}")
+
+    elif tool == "VAT Calculator":
+        c1, c2 = st.columns(2)
+        with c1:
+            vat_amt = st.number_input("Amount (UGX)", min_value=0, value=0, key="t3_amt")
+        with c2:
+            vat_rate = st.number_input("VAT Rate %", min_value=0, max_value=100, value=18, key="t3_rate")
+        if vat_amt > 0:
+            vat = vat_amt * vat_rate / 100
+            total_vat = vat_amt + vat
+            c1, c2 = st.columns(2)
+            c1.metric("VAT Amount", fmt_ugx(vat))
+            c2.metric("Total with VAT", fmt_ugx(total_vat))
+
+    elif tool == "Percentage Change Calculator":
+        c1, c2 = st.columns(2)
+        with c1:
+            old_v = st.number_input("Old Value (UGX)", min_value=0, value=0, key="t4_old")
+        with c2:
+            new_v = st.number_input("New Value (UGX)", min_value=0, value=0, key="t4_new")
+        if old_v > 0:
+            pct = ((new_v - old_v) / old_v) * 100
+            direction = "increase" if pct >= 0 else "decrease"
+            st.metric("Change", f"{abs(pct):.1f}% {direction}", delta=fmt_ugx(new_v - old_v))
+
+    elif tool == "Bulk Discount Calculator":
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            unit_price = st.number_input("Unit Price (UGX)", min_value=0, value=0, key="t5_up")
+        with c2:
+            quantity = st.number_input("Quantity", min_value=1, value=1, key="t5_qty")
+        with c3:
+            discount = st.number_input("Discount %", min_value=0, max_value=100, value=0, key="t5_disc")
+        if unit_price > 0:
+            subtotal = unit_price * quantity
+            disc_amt = subtotal * discount / 100
+            final = subtotal - disc_amt
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Subtotal", fmt_ugx(subtotal))
+            c2.metric("Discount", fmt_ugx(disc_amt))
+            c3.metric("Final Price", fmt_ugx(final))
+
+# ══════════════════════════════════════════════════
+# TAB 8 — BACKUP
+# ══════════════════════════════════════════════════
+with tabs[7]:
     st.subheader("💾 Backup & Data")
-    st.success("✅ All data saves automatically to Supabase in real time!")
+    st.success("✅ All data saves automatically to Supabase database in real time!")
 
     with st.spinner("Loading..."):
         prods = get_products()
@@ -808,21 +1016,34 @@ with tabs[6]:
             "sale_items": items, "suppliers": sups,
             "exported_at": datetime.now().isoformat(), "shop": "DEBONUEL"
         }
-        st.download_button("⬇ Full Backup (JSON)",
-                           json.dumps(backup, indent=2),
-                           file_name=f"DEBONUEL_Backup_{today()}.json",
-                           mime="application/json", use_container_width=True)
+        st.download_button(
+            "⬇ Full Backup (JSON)",
+            json.dumps(backup, indent=2),
+            file_name=f"DEBONUEL_Backup_{today()}.json",
+            mime="application/json", use_container_width=True
+        )
     with c2:
         if prods:
-            st.download_button("⬇ Products (CSV)",
-                               pd.DataFrame(prods).to_csv(index=False),
-                               file_name=f"DEBONUEL_Products_{today()}.csv",
-                               mime="text/csv", use_container_width=True)
+            st.download_button(
+                "⬇ Products (CSV)",
+                pd.DataFrame(prods).to_csv(index=False),
+                file_name=f"DEBONUEL_Products_{today()}.csv",
+                mime="text/csv", use_container_width=True
+            )
 
     st.divider()
-    total_rev = sum(float(s.get("total",0) or 0) for s in sales)
+    total_rev = sum(float(s.get("total", 0) or 0) for s in sales)
+    total_prof = sum(float(s.get("profit", 0) or 0) for s in sales)
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Products", len(prods))
     m2.metric("Total Sales", len(sales))
     m3.metric("Suppliers", len(sups))
     m4.metric("All-time Revenue", fmt_ugx(total_rev))
+
+    st.divider()
+    st.markdown("### All-time Profit Summary")
+    c1, c2 = st.columns(2)
+    c1.metric("All-time Gross Profit", fmt_ugx(total_prof))
+    if prods:
+        out_of_stock = len([p for p in prods if int(p.get("stock", 0) or 0) <= 0])
+        c2.metric("Products Out of Stock", out_of_stock)
