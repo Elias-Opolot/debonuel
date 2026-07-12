@@ -841,80 +841,113 @@ with tabs[6]:
     </div>
     """, unsafe_allow_html=True)
 
-    # Calculator buttons
-    def calc_btn(label, col, btn_type="dark"):
-        colors = {
-            "gold": "background-color:#c9a84c;color:#000;",
-            "red": "background-color:#d95555;color:#fff;",
-            "dark": "background-color:#1d1d1d;color:#f2ede4;border:1px solid #262626;",
-            "green": "background-color:#4caf7d;color:#fff;"
-        }
-        return col.button(label, use_container_width=True, key=f"calc_{label}_{btn_type}")
+    # Calculator as HTML component — renders properly on mobile
+    calc_result = st.session_state.get("calc_result", "")
 
-    rows = [
-        ["C", "±", "%", "÷"],
-        ["7", "8", "9", "×"],
-        ["4", "5", "6", "−"],
-        ["1", "2", "3", "+"],
-        ["0", ".", "⌫", "="]
-    ]
+    calc_html = """
+<style>
+.calc-wrap{background:#0b0b0b;border-radius:16px;padding:12px;max-width:400px;margin:0 auto;font-family:sans-serif}
+.calc-screen{background:#1d1d1d;border-radius:12px;padding:16px 14px 10px;text-align:right;margin-bottom:10px;min-height:80px}
+.calc-expr-disp{font-size:.8rem;color:#666;min-height:18px;word-break:break-all}
+.calc-num{font-size:2rem;font-weight:700;color:#c9a84c;word-break:break-all;min-height:44px}
+.calc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.cbtn{padding:18px 4px;border:none;border-radius:10px;font-size:1.1rem;font-weight:600;cursor:pointer;width:100%;transition:opacity .15s}
+.cbtn:active{opacity:.7}
+.cbtn-num{background:#1d1d1d;color:#f2ede4;border:1px solid #2a2a2a}
+.cbtn-op{background:#4caf7d;color:#fff}
+.cbtn-eq{background:#c9a84c;color:#000}
+.cbtn-fn{background:#2a2a2a;color:#f2ede4}
+.cbtn-cl{background:#d95555;color:#fff}
+</style>
+<div class="calc-wrap">
+  <div class="calc-screen">
+    <div class="calc-expr-disp" id="expr"></div>
+    <div class="calc-num" id="disp">0</div>
+  </div>
+  <div class="calc-grid">
+    <button class="cbtn cbtn-cl" onclick="press('C')">C</button>
+    <button class="cbtn cbtn-fn" onclick="press('±')">±</button>
+    <button class="cbtn cbtn-fn" onclick="press('%')">%</button>
+    <button class="cbtn cbtn-op" onclick="press('÷')">÷</button>
 
-    for row in rows:
-        cols = st.columns(4)
-        for j, btn in enumerate(row):
-            with cols[j]:
-                btn_type = "gold" if btn == "=" else "red" if btn == "C" else "green" if btn in ["÷","×","−","+","%"] else "dark"
-                color_map = {
-                    "gold": "#c9a84c", "red": "#d95555",
-                    "green": "#4caf7d", "dark": "#1d1d1d"
-                }
-                text_map = {"gold": "#000", "red": "#fff", "green": "#fff", "dark": "#f2ede4"}
-                if st.button(
-                    btn,
-                    key=f"c_{btn}_{j}",
-                    use_container_width=True
-                ):
-                    expr = st.session_state.calc_expr
-                    disp = st.session_state.calc_display
+    <button class="cbtn cbtn-num" onclick="press('7')">7</button>
+    <button class="cbtn cbtn-num" onclick="press('8')">8</button>
+    <button class="cbtn cbtn-num" onclick="press('9')">9</button>
+    <button class="cbtn cbtn-op" onclick="press('×')">×</button>
 
-                    if btn == "C":
-                        st.session_state.calc_expr = ""
-                        st.session_state.calc_display = "0"
-                    elif btn == "⌫":
-                        if expr:
-                            st.session_state.calc_expr = expr[:-1]
-                            st.session_state.calc_display = expr[:-1] if expr[:-1] else "0"
-                    elif btn == "=":
-                        try:
-                            safe = expr.replace("×", "*").replace("÷", "/").replace("−", "-")
-                            result = eval(safe)
-                            if isinstance(result, float) and result.is_integer():
-                                result = int(result)
-                            st.session_state.calc_result = str(result)
-                            st.session_state.calc_display = f"{result:,}" if isinstance(result, int) else f"{result:,.2f}"
-                            st.session_state.calc_expr = str(result)
-                        except:
-                            st.session_state.calc_display = "Error"
-                            st.session_state.calc_expr = ""
-                    elif btn == "±":
-                        try:
-                            val = float(expr.replace(",", "")) * -1
-                            st.session_state.calc_expr = str(val)
-                            st.session_state.calc_display = str(val)
-                        except:
-                            pass
-                    elif btn == "%":
-                        try:
-                            val = float(expr.replace(",", "")) / 100
-                            st.session_state.calc_expr = str(val)
-                            st.session_state.calc_display = str(val)
-                        except:
-                            pass
-                    else:
-                        new_expr = expr + btn
-                        st.session_state.calc_expr = new_expr
-                        st.session_state.calc_display = new_expr
-                    st.rerun()
+    <button class="cbtn cbtn-num" onclick="press('4')">4</button>
+    <button class="cbtn cbtn-num" onclick="press('5')">5</button>
+    <button class="cbtn cbtn-num" onclick="press('6')">6</button>
+    <button class="cbtn cbtn-op" onclick="press('−')">−</button>
+
+    <button class="cbtn cbtn-num" onclick="press('1')">1</button>
+    <button class="cbtn cbtn-num" onclick="press('2')">2</button>
+    <button class="cbtn cbtn-num" onclick="press('3')">3</button>
+    <button class="cbtn cbtn-op" onclick="press('+')">+</button>
+
+    <button class="cbtn cbtn-num" onclick="press('0')">0</button>
+    <button class="cbtn cbtn-num" onclick="press('.')">.</button>
+    <button class="cbtn cbtn-fn" onclick="press('⌫')">⌫</button>
+    <button class="cbtn cbtn-eq" onclick="press('=')">=</button>
+  </div>
+</div>
+
+<script>
+var expr = '';
+var justCalc = false;
+
+function press(btn) {
+  var disp = document.getElementById('disp');
+  var exprEl = document.getElementById('expr');
+
+  if (btn === 'C') {
+    expr = '';
+    disp.textContent = '0';
+    exprEl.textContent = '';
+    justCalc = false;
+  } else if (btn === '⌫') {
+    if (justCalc) { expr = ''; justCalc = false; }
+    expr = expr.slice(0, -1);
+    disp.textContent = expr || '0';
+    exprEl.textContent = '';
+  } else if (btn === '=') {
+    try {
+      exprEl.textContent = expr;
+      var safe = expr.replace(/×/g,'*').replace(/÷/g,'/').replace(/−/g,'-');
+      var result = Function('"use strict"; return (' + safe + ')')();
+      if (Number.isInteger(result)) {
+        disp.textContent = result.toLocaleString();
+      } else {
+        disp.textContent = parseFloat(result.toFixed(4)).toLocaleString();
+      }
+      expr = String(result);
+      justCalc = true;
+    } catch(e) {
+      disp.textContent = 'Error';
+      expr = '';
+    }
+  } else if (btn === '±') {
+    try {
+      var v = parseFloat(expr) * -1;
+      expr = String(v);
+      disp.textContent = v.toLocaleString();
+    } catch(e) {}
+  } else if (btn === '%') {
+    try {
+      var v = parseFloat(expr) / 100;
+      expr = String(v);
+      disp.textContent = v;
+    } catch(e) {}
+  } else {
+    if (justCalc && !isNaN(btn)) { expr = ''; justCalc = false; }
+    expr += btn;
+    disp.textContent = expr;
+    exprEl.textContent = '';
+  }
+}
+</script>
+"""
+    st.components.v1.html(calc_html, height=420)
 
     st.divider()
 
